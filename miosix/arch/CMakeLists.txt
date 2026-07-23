@@ -29,6 +29,7 @@ set(MIOSIX_BOARDS
     atsam4lc2aa_generic
     efm32g222f128_generic
     efm32gg332f1024_wandstem
+    hrc7000_hd2
     lpc2138_generic
     lpc2138_miosix_board
     nrf52840_generic
@@ -115,25 +116,34 @@ set_property(CACHE MIOSIX_LINKER_SCRIPT PROPERTY STRINGS ${MIOSIX_LINKER_SCRIPT_
 if(NOT MIOSIX_LINKER_SCRIPT MATCHES ".*\.ld$")
     message(FATAL_ERROR "MIOSIX_LINKER_SCRIPT '${MIOSIX_LINKER_SCRIPT}' is not a valid linker script because it does not end with .ld")
 endif()
-list(FIND MIOSIX_LINKER_SCRIPT_LIST "${MIOSIX_LINKER_SCRIPT}" LINKER_SCRIPT_IDX)
-if(LINKER_SCRIPT_IDX EQUAL -1)
-    # If there is no cached value, or the cached value is not in the list, complain
-    miosix_expected_item_in_list("Invalid linker script '${MIOSIX_LINKER_SCRIPT}' specified with MIOSIX_LINKER_SCRIPT" "${LINKER_SCRIPTS_ONLY_LIST}")
+if(IS_ABSOLUTE "${MIOSIX_LINKER_SCRIPT}")
+    # Out-of-tree linker script: an absolute path is used verbatim. The
+    # in-board-list membership check and the per-script extra-flags lookup only
+    # apply to board-provided scripts, so they are skipped here.
+    set(MIOSIX_LINKER_SCRIPT_PATH "${MIOSIX_LINKER_SCRIPT}")
+else()
+    # Board-provided script: resolve against the board include dir and validate.
+    list(FIND MIOSIX_LINKER_SCRIPT_LIST "${MIOSIX_LINKER_SCRIPT}" LINKER_SCRIPT_IDX)
+    if(LINKER_SCRIPT_IDX EQUAL -1)
+        # If there is no cached value, or the cached value is not in the list, complain
+        miosix_expected_item_in_list("Invalid linker script '${MIOSIX_LINKER_SCRIPT}' specified with MIOSIX_LINKER_SCRIPT" "${LINKER_SCRIPTS_ONLY_LIST}")
+    endif()
+    # Set compilation options based on linker scripts
+    list(SUBLIST MIOSIX_LINKER_SCRIPT_LIST ${LINKER_SCRIPT_IDX} -1 LINKER_SCRIPT_OPTIONS)
+    foreach(OPTION IN LISTS LINKER_SCRIPT_OPTIONS)
+        if(OPTION STREQUAL MIOSIX_LINKER_SCRIPT)
+            # first iteration, ignore
+            continue()
+        endif()
+        if(OPTION MATCHES ".*\.ld$")
+            break()
+        endif()
+        list(APPEND MIOSIX_BOARD_C_FLAGS "${OPTION}")
+        list(APPEND MIOSIX_BOARD_CXX_FLAGS "${OPTION}")
+        message(STATUS "Linker script '${MIOSIX_LINKER_SCRIPT}' adds C/CXX flag ${OPTION}")
+    endforeach()
+    set(MIOSIX_LINKER_SCRIPT_PATH "${MIOSIX_BOARD_INC}/${MIOSIX_LINKER_SCRIPT}")
 endif()
-# Set compilation options based on linker scripts
-list(SUBLIST MIOSIX_LINKER_SCRIPT_LIST ${LINKER_SCRIPT_IDX} -1 LINKER_SCRIPT_OPTIONS)
-foreach(OPTION IN LISTS LINKER_SCRIPT_OPTIONS)
-    if(OPTION STREQUAL MIOSIX_LINKER_SCRIPT)
-        # first iteration, ignore
-        continue()
-    endif()
-    if(OPTION MATCHES ".*\.ld$")
-        break()
-    endif()
-    list(APPEND MIOSIX_BOARD_C_FLAGS "${OPTION}")
-    list(APPEND MIOSIX_BOARD_CXX_FLAGS "${OPTION}")
-    message(STATUS "Linker script '${MIOSIX_LINKER_SCRIPT}' adds C/CXX flag ${OPTION}")
-endforeach()
 
 # Normalize board variant option
 set(MIOSIX_BOARD_VARIANT "${MIOSIX_DEFAULT_BOARD_VARIANT}" CACHE STRING "Board variant")
