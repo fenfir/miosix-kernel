@@ -77,11 +77,19 @@ void IRQportableStartKernel() noexcept
 
 /**
  * \internal
- * Idle-thread CPU sleep (interfaces_private/sleep.h). Currently a no-op, so the
- * idle thread busy-spins — functionally correct (the os-timer IRQ still
- * preempts it). TODO: use the CK803S `wait` instruction (WFI equivalent) for
- * real power saving once interrupt-wake behaviour is confirmed on hardware.
+ * Idle-thread CPU sleep (interfaces_private/sleep.h): stop the CPU clock until
+ * an interrupt arrives. The C-SKY `wait` instruction is the WFI equivalent — it
+ * halts the core but leaves peripherals (incl. the os-timer) running, and exits
+ * on a pending interrupt regardless of PSR.IE. That matches the sleepCpu()
+ * contract (callable with interrupts enabled or disabled): the idle thread
+ * calls this with IRQs disabled under the global lock, `wait` exits the instant
+ * the wakeup/preemption timer IRQ is asserted, and that IRQ is serviced when the
+ * lock releases and IRQs re-enable. Same bare-instruction idiom as the Cortex-M
+ * port's __WFI() and Linux arch/csky arch_cpu_idle().
  */
-void sleepCpu() {}
+void sleepCpu()
+{
+    asm volatile("wait":::"memory");
+}
 
 } //namespace miosix
