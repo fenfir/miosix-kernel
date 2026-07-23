@@ -242,13 +242,13 @@ set_property(TARGET miosix PROPERTY PROGRAM_CMDLINE ${PROGRAM_CMDLINE})
 target_compile_definitions(miosix PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:COMPILING_MIOSIX>)
 
 # Configure linker file and options needed to link agains this library
-set_property(TARGET miosix PROPERTY LINK_DEPENDS ${MIOSIX_BOARD_INC}/${MIOSIX_LINKER_SCRIPT})
+set_property(TARGET miosix PROPERTY LINK_DEPENDS ${MIOSIX_LINKER_SCRIPT_PATH})
 target_link_options(miosix INTERFACE
     -qkernelspace
     ${MIOSIX_BOARD_EXE_LINKER_FLAGS}
     ${MIOSIX_CPU_FLAGS}
     ${MIOSIX_CHIP_EXE_LINKER_FLAGS}
-    -Wl,-T${MIOSIX_BOARD_INC}/${MIOSIX_LINKER_SCRIPT}
+    -Wl,-T${MIOSIX_LINKER_SCRIPT_PATH}
     -L${CMAKE_CURRENT_SOURCE_DIR}
     ${MIOSIX_OPT_EXCEPT}
     -nostdlib
