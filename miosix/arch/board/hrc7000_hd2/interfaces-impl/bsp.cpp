@@ -22,26 +22,30 @@
 #include "interfaces/arch_registers.h"
 #include "kernel/lock.h"
 #include "miosix_settings.h"
+#include "filesystem/console/console_device.h"
+#include "filesystem/devfs/devfs.h"
 
 namespace miosix {
 
 //-----------------------------------------------------------------------------
-// Raw polled-TX serial debug on UART0 (0x14030000, the loader/debug UART the
-// flashing bridge reads at 57600). DesignWare 16550: THR/DLL +0x00, DLH/IER
-// +0x04, FCR +0x08, LCR +0x0c, LSR +0x14. Deliberately NOT routed through the
-// Miosix Device/stdio/iprintf path (that hangs early boot here); this is a
-// bare hd2_dbg_puts() the app/board code can call directly. Bounded spin so a
-// mis-clocked/stuck UART can never hang. We do NOT touch the divisor — the IAP
+// Polled serial on UART0 (0x14030000, the loader/debug UART the flashing bridge
+// reads at 57600). DesignWare 16550: RBR/THR/DLL +0x00, DLH/IER +0x04, FCR
+// +0x08, LCR +0x0c, LSR +0x14. hd2_dbg_puts() is a bare puts the board and the
+// CPU fault path can call directly (bounded spin, cannot hang); the HD2Console
+// Device below wraps it and is registered as the default console, so
+// stdout/printf/bootlog route here too. We do NOT touch the divisor — the IAP
 // already set UART0 to 57600 and we inherit it (baud confirmed empirically).
 //-----------------------------------------------------------------------------
 #define HD2_UART0(off)  (*(volatile unsigned int*)(0x14030000u+(off)))
 #define UART0_THR       HD2_UART0(0x00u)
+#define UART0_RBR       HD2_UART0(0x00u)   //RX buffer (read side of +0x00)
 #define UART0_DLL       HD2_UART0(0x00u)
 #define UART0_DLH       HD2_UART0(0x04u)
 #define UART0_FCR       HD2_UART0(0x08u)
 #define UART0_LCR       HD2_UART0(0x0cu)
 #define UART0_LSR       HD2_UART0(0x14u)
 #define UART_LSR_THRE   0x20u   //THR empty: ok to write
+#define UART_LSR_DR     0x01u   //RX data ready
 
 } //namespace miosix
 
@@ -83,6 +87,42 @@ namespace miosix {
 #define HD2_LED_RED       (1u<<1)    // PTB1, active-high
 #define HD2_PWR_HOLD      (1u<<13)   // PTB13: power self-latch (HIGH=hold, LOW=cut)
 
+/**
+ * Minimal polled console Device for UART0, registered as the default console so
+ * stdout/printf/iprintf and the kernel bootlog/error path route to the debug
+ * UART. Output reuses hd2_dbg_putc (a bounded polled write — cannot hang);
+ * IRQwrite() gives the kernel an IRQ-safe path for boot/fault logs; input is a
+ * non-blocking poll of the RX FIFO (stdin is unused by this port today).
+ */
+class HD2Console : public Device
+{
+public:
+    HD2Console() : Device(Device::STREAM) {}
+
+    ssize_t writeBlock(const void *buffer, size_t size, off_t) override
+    {
+        const char *p=static_cast<const char*>(buffer);
+        for(size_t i=0;i<size;i++) hd2_dbg_putc(p[i]);
+        return static_cast<ssize_t>(size);
+    }
+
+    ssize_t readBlock(void *buffer, size_t size, off_t) override
+    {
+        char *p=static_cast<char*>(buffer);
+        size_t n=0;
+        while(n<size && (UART0_LSR & UART_LSR_DR)) p[n++]=static_cast<char>(UART0_RBR);
+        return static_cast<ssize_t>(n);
+    }
+
+    void IRQwrite(const char *str) override { hd2_dbg_puts(str); }
+
+    int ioctl(int cmd, void *) override
+    {
+        //Polled TX is synchronous, so a sync request is a no-op success.
+        return cmd==IOCTL_SYNC ? 0 : -1;
+    }
+};
+
 void IRQbspInit()
 {
     //LEDs (PTB0/PTB1) as outputs, off; keep the power self-latch (PTB13) held.
@@ -92,6 +132,11 @@ void IRQbspInit()
     //Bring up the polled-TX UART0 debug console (57600 8N1). Must run after
     //IRQmemoryAndClockInit (clk_init_pll) so the divisor matches the 42 MHz ref.
     hd2_dbg_init();
+
+    //Route stdout/printf/iprintf and the kernel bootlog through UART0. Must be
+    //done here in IRQbspInit (IRQsetDefaultConsole contract); new is permitted
+    //during boot.
+    IRQsetDefaultConsole(intrusive_ref_ptr<Device>(new HD2Console));
 }
 
 void bspInit2()
